@@ -32,7 +32,7 @@ func main() {
 
 // Comment
 func camerasCall() {
-	cam1, err := video.NewVideo("./videos/vid3.mp4")
+	cam1, err := video.NewVideo("./videos/vid.mp4")
 
 	if err != nil {
 		panic(err)
@@ -74,26 +74,23 @@ func NewStream(ip string) *LiveStream {
 	return c
 }
 
-type FrameView struct {
-	Host string
-	Mat  gocv.Mat
+type Frame struct {
+	Fps   int
+	Image gocv.Mat
 }
 
-var FrameChan = make(chan *FrameView)
+var FrameChan = make(chan *Frame)
 
 // Comment
 func (ctx *LiveStream) buffer() {
-	ctx.stream.Buffer(func(data []byte) {
-		mat, err := ctx.BytesToMat(data)
+	ctx.stream.Buffer(func(frame *video.Frame) {
+		mat, err := ctx.BytesToMat(frame.Data)
 
 		if err != nil {
 			return
 		}
 
-		FrameChan <- &FrameView{
-			Host: ctx.host,
-			Mat:  mat,
-		}
+		FrameChan <- &Frame{Fps: frame.Total, Image: mat}
 	})
 }
 
@@ -113,9 +110,16 @@ type Window struct {
 }
 
 // Comment
-func (ctx *Window) Show(mat gocv.Mat) {
-	ctx.window.IMShow(mat)
-	ctx.window.WaitKey(1)
+func (ctx *Window) Show(frame *Frame) {
+
+	ctx.window.IMShow(frame.Image)
+
+	// fmt.Println("FRAME -> ", frame.Fps)
+
+	ctx.window.WaitKey(int(1000.0 / float64(frame.Fps)))
+
+	// fps := 30 // Forgot in decreased image size
+	// ctx.window.WaitKey(int(1000.0 / fps))
 }
 
 // Comment
@@ -140,8 +144,8 @@ func serverCall() {
 
 	go server.Listen()
 
-	for f := range FrameChan {
-		window.Show(f.Mat)
+	for frame := range FrameChan {
+		window.Show(frame)
 	}
 
 	window.window.Close()

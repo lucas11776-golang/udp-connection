@@ -11,6 +11,7 @@ import (
 
 type LiveStream interface {
 	Reader(callback func(frame gocv.Mat, err error))
+	Fps() int
 	Close()
 }
 
@@ -31,30 +32,42 @@ func (ctx *LiveStreamFaker) Start(host string, port int) {
 }
 
 // Comment
-func (ctx *LiveStreamFaker) packet(fragments uint16, packet uint64, order uint16, data []byte) []byte {
-	size := make([]byte, 2)
+func (ctx *LiveStreamFaker) packet(frame int, fragments uint16, packet uint64, order uint16, data []byte) []byte {
+	pk := []byte{}
 
-	binary.BigEndian.PutUint16(size, fragments)
-
-	pk := append([]byte{}, size...)
-
+	// Packet No.
 	no := make([]byte, 8)
 
 	binary.BigEndian.PutUint64(no, packet)
 
 	pk = append(pk, no...)
 
+	// Packet Chuck Size
+	size := make([]byte, 2)
+
+	binary.BigEndian.PutUint16(size, fragments)
+
+	pk = append(pk, size...)
+
+	// Packet Order
 	ord := make([]byte, 2)
 
 	binary.BigEndian.PutUint16(ord, order)
 
 	pk = append(pk, ord...)
 
+	// Packet FPS
+	fr := make([]byte, 2)
+
+	binary.BigEndian.PutUint16(fr, uint16(frame))
+
+	pk = append(pk, fr...)
+
 	return append(pk, data...)
 }
 
 const (
-	MTU = 1400 - 12 // 1388
+	MTU = 1400 - 14 // 1388
 )
 
 // Comment
@@ -84,7 +97,6 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 			return
 		}
 
-		// Encode as JPEG to reduce size
 		buff, err := gocv.IMEncode(".jpg", frame)
 
 		if err != nil {
@@ -108,9 +120,9 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 			e := i*MTU + MTU
 
 			if e < len(payload) {
-				conn.Write(ctx.packet(uint16(div), uint64(index), uint16(i), payload[s:e]))
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:e]))
 			} else {
-				conn.Write(ctx.packet(uint16(div), uint64(index), uint16(i), payload[s:]))
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:]))
 			}
 		}
 

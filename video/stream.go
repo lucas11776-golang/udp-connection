@@ -13,6 +13,13 @@ const (
 	END int64 = 1000000000000000000
 )
 
+type Frame struct {
+	Total int
+	Data  []byte
+}
+
+type BufferCallback func(frame *Frame)
+
 // Dirty version of constructing packets
 type Stream struct {
 	Current int64
@@ -20,12 +27,13 @@ type Stream struct {
 	mutex   sync.Mutex
 	// Will crash on long video overload :()
 	Payloads map[int64]*Payload
-	Buffers  []func(data []byte)
+	Buffers  []BufferCallback
 }
 
 type Payload struct {
-	Fragments int
-	Packets   []*Packet
+	FramePerSecond int
+	Fragments      int
+	Packets        []*Packet
 }
 
 type Packet struct {
@@ -46,7 +54,7 @@ func NewStream() *Stream {
 }
 
 // Comment
-func (ctx *Stream) Buffer(callback func(data []byte)) {
+func (ctx *Stream) Buffer(callback BufferCallback) {
 	ctx.Buffers = append(ctx.Buffers, callback)
 }
 
@@ -62,7 +70,7 @@ func Map(p []*Packet) []byte {
 
 func (ctx *Stream) deletePayload(key int64) {
 	ctx.mutex.Lock()
-	delete(ctx.Payloads, ctx.Current)
+	delete(ctx.Payloads, key)
 	ctx.mutex.Unlock()
 }
 
@@ -71,6 +79,7 @@ func (ctx *Stream) start() {
 	tick := time.Tick(10 * time.Millisecond)
 
 	for range tick {
+		// Will skip frame :(
 		if ctx.Current <= END {
 			ctx.Current = ctx.Last
 		}
@@ -96,7 +105,11 @@ func (ctx *Stream) start() {
 		py := slices.Clone(Map(payload.Packets))
 
 		for _, callback := range ctx.Buffers {
-			go callback(py)
+
+			go callback(&Frame{
+				Total: payload.FramePerSecond,
+				Data:  py,
+			})
 		}
 
 		ctx.deletePayload(ctx.Current)
@@ -109,13 +122,14 @@ func (ctx *Stream) start() {
 
 // Comment
 func (ctx *Stream) Packet(p []byte) {
-	if len(p) < 12 {
+	if len(p) < 14 {
 		return
 	}
 
-	size := binary.BigEndian.Uint16(p[:2])
-	packet := binary.BigEndian.Uint64(p[2:10])
+	packet := binary.BigEndian.Uint64(p[:8])
+	size := binary.BigEndian.Uint16(p[8:10])
 	order := binary.BigEndian.Uint16(p[10:12])
+	fps := binary.BigEndian.Uint16(p[12:14])
 
 	ctx.mutex.Lock()
 	payload, ok := ctx.Payloads[int64(packet)]
@@ -125,11 +139,12 @@ func (ctx *Stream) Packet(p []byte) {
 		ctx.mutex.Lock()
 
 		ctx.Payloads[int64(packet)] = &Payload{
-			Fragments: int(size),
+			Fragments:      int(size),
+			FramePerSecond: int(fps),
 			Packets: []*Packet{
 				{
 					Order: int(order),
-					Data:  p[12:],
+					Data:  p[14:],
 				},
 			},
 		}
@@ -143,7 +158,7 @@ func (ctx *Stream) Packet(p []byte) {
 
 	payload.Packets = append(payload.Packets, &Packet{
 		Order: int(order),
-		Data:  p[12:],
+		Data:  p[14:],
 	})
 
 	// if payload.Fragments == len()
