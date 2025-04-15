@@ -38,18 +38,24 @@ func (ctx *Server) Payload(callback PayloadCallback) {
 
 // Comment
 func (ctx *Server) Listen() {
+
+	index := 0
+
 	for {
 		buff := make([]byte, 1024*2)
 
-		// Read incoming UDP packets.
 		n, remoteAddr, err := ctx.udp.ReadFromUDP(buff)
+
+		// fmt.Println("DIV", index, err)
+
+		index++
 
 		if err != nil {
 			continue
 		}
 
 		for _, callback := range ctx.messages {
-			callback(remoteAddr.String(), buff[:n])
+			go callback(remoteAddr.String(), buff[:n])
 		}
 	}
 }

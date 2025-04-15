@@ -16,6 +16,7 @@ type Video struct {
 // Comment
 func NewVideo(path string) (*Video, error) {
 	vCap, err := gocv.VideoCaptureFile(path)
+	// vCap, err := gocv.VideoCaptureDevice(0)
 
 	if err != nil {
 		return nil, err

@@ -31,6 +31,12 @@ func (ctx *LiveStreamFaker) Start(host string, port int) {
 	}
 }
 
+// Number -> 8
+// Size   -> 2
+// Order  -> 2
+// FPS    -> 2
+// Data   -> [14:]
+
 // Comment
 func (ctx *LiveStreamFaker) packet(frame int, fragments uint16, packet uint64, order uint16, data []byte) []byte {
 	pk := []byte{}
@@ -87,6 +93,14 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 	index := 0
 
 	video.Reader(func(frame gocv.Mat, err error) {
+
+		// if index > 0 {
+
+		// 	os.Exit(0)
+
+		// 	return
+		// }
+
 		if err != nil {
 			return
 		}
@@ -105,7 +119,7 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 
 		payload := buff.GetBytes()
 
-		fmt.Println("PACKET:", index, " SIZE:", len(payload))
+		// fmt.Println("PACKET:", index, " SIZE:", len(payload))
 
 		size := len(payload)
 		div := size / MTU
@@ -115,15 +129,22 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 			div += 1
 		}
 
+		fmt.Println("INDEX", index)
+
 		for i := range div {
 			s := i * MTU
 			e := i*MTU + MTU
+
+			// fmt.Println("DIV", i)
 
 			if e < len(payload) {
 				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:e]))
 			} else {
 				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:]))
 			}
+
+			fmt.Println("PACKET", index, i)
+
 		}
 
 		index++

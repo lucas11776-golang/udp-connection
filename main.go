@@ -2,13 +2,15 @@ package main
 
 import (
 	"classify/cameras"
-	"classify/server"
+	"classify/jitter"
 	"classify/video"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
 	"gocv.io/x/gocv"
+	// "github.com/pion/interceptor/pkg/jitterbuffer"
 )
 
 const (
@@ -17,21 +19,20 @@ const (
 )
 
 func main() {
-	if len(os.Args) >= 2 {
-		switch strings.ToLower(os.Args[1]) {
+	if len(os.Args) < 2 {
+		return
+	}
 
-		case "server":
-			serverCall()
-
-		case "stream":
-			camerasCall()
-
-		}
+	switch strings.ToLower(os.Args[1]) {
+	case "stream":
+		stream()
+	case "server":
+		server()
 	}
 }
 
 // Comment
-func camerasCall() {
+func stream() {
 	cam1, err := video.NewVideo("./videos/vid.mp4")
 
 	if err != nil {
@@ -43,7 +44,101 @@ func camerasCall() {
 	fmt.Println(fmt.Scanln())
 }
 
-func (ctx *LiveStream) BytesToMat(data []byte) (gocv.Mat, error) {
+type Payload struct {
+	host  string
+	frame *jitter.Frame
+}
+
+var payloads = make(chan *Payload)
+
+type Stream struct {
+	host   string
+	buffer *jitter.Buffer
+}
+
+var streams = map[string]*Stream{}
+
+// Comment
+func server() {
+	addr := net.UDPAddr{
+		Port: PORT,
+		IP:   net.ParseIP(HOST),
+	}
+
+	conn, err := net.ListenUDP("udp", &addr)
+
+	if err != nil {
+		panic(err)
+	}
+
+	window := gocv.NewWindow("UDP PACKETS")
+
+	go run(conn)
+
+	for payload := range payloads {
+		if _, ok := streams[payload.host]; ok {
+			mat, err := BytesToMat(payload.frame.Data)
+
+			if err != nil {
+				continue
+			}
+
+			window.IMShow(mat)
+			window.WaitKey(1)
+		}
+	}
+
+	conn.Close()
+}
+
+// Comment
+func run(conn *net.UDPConn) {
+	for {
+		buffer := make([]byte, 2048)
+		n, remoteAddr, err := conn.ReadFromUDP(buffer)
+
+		if err != nil {
+			fmt.Println("Error reading packet:", err)
+			continue
+		}
+
+		if n < 14 {
+			fmt.Printf("Packet from %v too short: %d bytes\n", remoteAddr, n)
+			continue
+		}
+
+		stream, ok := streams[remoteAddr.String()]
+
+		if !ok {
+			stream = &Stream{
+				host:   remoteAddr.String(),
+				buffer: jitter.NewBuffer(),
+			}
+
+			go Reader(stream)
+
+			// Need struct for mutex
+			streams[remoteAddr.String()] = stream
+		}
+
+		stream.buffer.Receive(buffer[:n])
+	}
+}
+
+// Comment
+func Reader(stream *Stream) {
+	for {
+		frame := stream.buffer.Read()
+
+		if frame == nil {
+			continue
+		}
+
+		payloads <- &Payload{host: stream.host, frame: frame}
+	}
+}
+
+func BytesToMat(data []byte) (gocv.Mat, error) {
 	mat, err := gocv.IMDecode(data, gocv.IMReadColor)
 
 	if err != nil {
@@ -55,98 +150,4 @@ func (ctx *LiveStream) BytesToMat(data []byte) (gocv.Mat, error) {
 	}
 
 	return mat, nil
-}
-
-type LiveStream struct {
-	host   string
-	stream *video.Stream
-}
-
-// Comment
-func NewStream(ip string) *LiveStream {
-	c := &LiveStream{
-		host:   ip,
-		stream: video.NewStream(),
-	}
-
-	go c.buffer()
-
-	return c
-}
-
-type Frame struct {
-	Fps   int
-	Image gocv.Mat
-}
-
-var FrameChan = make(chan *Frame)
-
-// Comment
-func (ctx *LiveStream) buffer() {
-	ctx.stream.Buffer(func(frame *video.Frame) {
-		mat, err := ctx.BytesToMat(frame.Data)
-
-		if err != nil {
-			return
-		}
-
-		FrameChan <- &Frame{Fps: frame.Total, Image: mat}
-	})
-}
-
-// Comment
-func (ctx *LiveStream) Show(window *gocv.Window, data []byte) {
-	mat, err := ctx.BytesToMat(data)
-
-	if err != nil {
-		return
-	}
-
-	window.IMShow(mat)
-}
-
-type Window struct {
-	window *gocv.Window
-}
-
-// Comment
-func (ctx *Window) Show(frame *Frame) {
-
-	ctx.window.IMShow(frame.Image)
-
-	// fmt.Println("FRAME -> ", frame.Fps)
-
-	ctx.window.WaitKey(int(1000.0 / float64(frame.Fps)))
-
-	// fps := 30 // Forgot in decreased image size
-	// ctx.window.WaitKey(int(1000.0 / fps))
-}
-
-// Comment
-func serverCall() {
-	window := &Window{window: gocv.NewWindow("UDP Video Stream")}
-
-	server := server.Serve(HOST, PORT)
-
-	cams := map[string]*LiveStream{}
-
-	server.Payload(func(host string, packet []byte) {
-		cam, ok := cams[host]
-
-		if !ok {
-			cams[host] = NewStream(host)
-
-			cam = cams[host]
-		}
-
-		cam.stream.Packet(packet)
-	})
-
-	go server.Listen()
-
-	for frame := range FrameChan {
-		window.Show(frame)
-	}
-
-	window.window.Close()
 }
