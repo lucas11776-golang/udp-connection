@@ -140,15 +140,15 @@ func (ctx *Buffer) cleanup() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for range ticker.C {
-		now := time.Now()
 		ctx.mutexPackets.Lock()
 		for packetNum, pkt := range ctx.packets {
-			if now.Sub(pkt.time) > ctx.timeout {
+			if time.Since(pkt.time) > ctx.timeout {
 				delete(ctx.packets, packetNum)
 			}
 		}
 		ctx.mutexPackets.Unlock()
 	}
+
 }
 
 type Stream struct {
