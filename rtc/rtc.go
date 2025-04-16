@@ -113,6 +113,10 @@ func Server(host string, port int) {
 				continue
 			}
 
+			// if index == 1 {
+			// 	return
+			// }
+
 			index++
 
 			window.IMShow(mat)
