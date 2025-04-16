@@ -13,22 +13,36 @@ type Video struct {
 	fps  int
 }
 
+func video(vc *gocv.VideoCapture) *Video {
+	mat := gocv.NewMat()
+
+	return &Video{
+		img:  mat,
+		vCap: vc,
+		fps:  int(math.Ceil(vc.Get(gocv.VideoCaptureFPS))),
+	}
+}
+
 // Comment
-func NewVideo(path string) (*Video, error) {
-	vCap, err := gocv.VideoCaptureFile(path)
-	// vCap, err := gocv.VideoCaptureDevice(0)
+func NewCam(device int) (*Video, error) {
+	vc, err := gocv.VideoCaptureDevice(device)
 
 	if err != nil {
 		return nil, err
 	}
 
-	mat := gocv.NewMat()
+	return video(vc), nil
+}
 
-	return &Video{
-		img:  mat,
-		vCap: vCap,
-		fps:  int(math.Ceil(vCap.Get(gocv.VideoCaptureFPS))),
-	}, nil
+// Comment
+func NewVideo(path string) (*Video, error) {
+	vc, err := gocv.VideoCaptureFile(path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return video(vc), nil
 }
 
 // Comment

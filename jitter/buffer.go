@@ -2,7 +2,6 @@ package jitter
 
 import (
 	"encoding/binary"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -76,6 +75,7 @@ type Buffer struct {
 	mutexPackets sync.Mutex
 	stream       *Stream
 	timeout      time.Duration
+	ticker       *time.Ticker
 }
 
 // Comment
@@ -137,18 +137,24 @@ func (ctx *Buffer) payload(packetNumber int64, fragmentNumber int, fragmentPosit
 
 // Comment
 func (ctx *Buffer) cleanup() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for range ticker.C {
-		ctx.mutexPackets.Lock()
-		for packetNum, pkt := range ctx.packets {
-			if time.Since(pkt.time) > ctx.timeout {
-				delete(ctx.packets, packetNum)
-			}
-		}
-		ctx.mutexPackets.Unlock()
-	}
+	ctx.ticker = time.NewTicker(100 * time.Millisecond)
 
+	go func() {
+		for range ctx.ticker.C {
+			ctx.mutexPackets.Lock()
+			for packetNum, pkt := range ctx.packets {
+				if time.Since(pkt.time) > ctx.timeout {
+					delete(ctx.packets, packetNum)
+				}
+			}
+			ctx.mutexPackets.Unlock()
+		}
+	}()
+}
+
+// Comment
+func (ctx *Buffer) Close() {
+	ctx.ticker.Stop()
 }
 
 type Stream struct {
@@ -180,7 +186,7 @@ func (ctx *Stream) Frame() *Frame {
 
 	var positions []int
 
-	fmt.Println("PACKET", packet.position, "FRAME LEFT", len(ctx.packets))
+	// fmt.Println("PACKET", packet.position, "FRAME LEFT", len(ctx.packets))
 
 	for pos := range packet.fragments {
 		positions = append(positions, pos)

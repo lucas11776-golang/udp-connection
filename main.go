@@ -2,15 +2,15 @@ package main
 
 import (
 	"classify/cameras"
-	"classify/jitter"
+	"classify/rtc"
 	"classify/video"
+	"context"
 	"fmt"
-	"net"
+	h "net/http"
 	"os"
 	"strings"
 
-	"gocv.io/x/gocv"
-	// "github.com/pion/interceptor/pkg/jitterbuffer"
+	"github.com/lucas11776-golang/http"
 )
 
 const (
@@ -27,13 +27,15 @@ func main() {
 	case "stream":
 		stream()
 	case "server":
-		server()
+		go server()
+		rtc.Server(HOST, PORT)
 	}
 }
 
 // Comment
 func stream() {
 	cam1, err := video.NewVideo("./videos/vid.mp4")
+	// cam1, err := video.NewCam(0)
 
 	if err != nil {
 		panic(err)
@@ -44,110 +46,79 @@ func stream() {
 	fmt.Println(fmt.Scanln())
 }
 
-type Payload struct {
-	host  string
-	frame *jitter.Frame
-}
-
-var payloads = make(chan *Payload)
-
-type Stream struct {
-	host   string
-	buffer *jitter.Buffer
-}
-
-var streams = map[string]*Stream{}
-
-// Comment
 func server() {
-	addr := net.UDPAddr{
-		Port: PORT,
-		IP:   net.ParseIP(HOST),
-	}
+	server := http.Server(HOST, PORT).SetView("views", "html")
 
-	conn, err := net.ListenUDP("udp", &addr)
+	server.Route().Group("videos", func(route *http.Router) {
+		route.Group("{video}", func(route *http.Router) {
+			route.Get("/", func(req *http.Request, res *http.Response) *http.Response {
+				return res.View("video", http.ViewData{"video": "1"})
+			})
+		})
+	})
 
-	if err != nil {
-		panic(err)
-	}
+	server.Route().Group("streams", func(route *http.Router) {
+		route.Group("{id}", func(route *http.Router) {
+			route.Get("/", func(req *http.Request, res *http.Response) *http.Response {
+				stream := rtc.Streams.Filter(func(i interface{}) bool {
+					return i.(*rtc.Payload).Host != ""
+				}).Map(func(ctx context.Context, i interface{}) (interface{}, error) {
+					return i.(*rtc.Payload).Frame.Data, nil
+				}).Observe()
 
-	window := gocv.NewWindow("UDP PACKETS")
+				req.Response.Writer.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 
-	go run(conn)
+				end := req.Request.Context().Done()
 
-	for payload := range payloads {
-		if _, ok := streams[payload.host]; ok {
-			mat, err := BytesToMat(payload.frame.Data)
+				for frame := range stream {
+					select {
+					case <-end:
+						return nil
 
-			if err != nil {
-				continue
-			}
+					default:
+						res.Writer.Write([]byte("--frame\r\n"))
+						res.Writer.Write([]byte("Content-Type: image/jpeg\r\n"))
 
-			window.IMShow(mat)
-			window.WaitKey(1)
-		}
-	}
+						res.Writer.Write([]byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(frame.V.([]byte)))))
 
-	conn.Close()
+						res.Writer.Write(frame.V.([]byte))
+						res.Writer.Write([]byte("\r\n"))
+
+						if f, ok := res.Writer.(h.Flusher); ok {
+							f.Flush()
+						}
+					}
+				}
+
+				return res
+			})
+		})
+	})
+
+	server.Listen()
 }
 
-// Comment
-func run(conn *net.UDPConn) {
-	for {
-		buffer := make([]byte, 2048)
-		n, remoteAddr, err := conn.ReadFromUDP(buffer)
+// Can you show me a GO example of MJPEG frames for video stream?
 
-		if err != nil {
-			fmt.Println("Error reading packet:", err)
-			continue
-		}
+// Want a quick example in Go or Python on how to serve MJPEG from those frames
 
-		if n < 14 {
-			fmt.Printf("Packet from %v too short: %d bytes\n", remoteAddr, n)
-			continue
-		}
+// // Write multipart response
+// w.Write([]byte("--frame\r\n"))
+// w.Write([]byte("Content-Type: image/jpeg\r\n"))
+// w.Write([]byte("Content-Length: " + string(len(buf)) + "\r\n\r\n"))
+// w.Write(buf)
+// w.Write([]byte("\r\n"))
 
-		stream, ok := streams[remoteAddr.String()]
+// // Stream at ~30fps
+// time.Sleep(33 * time.Millisecond)
 
-		if !ok {
-			stream = &Stream{
-				host:   remoteAddr.String(),
-				buffer: jitter.NewBuffer(),
-			}
+// // Flush to client
+// if f, ok := w.(http.Flusher); ok {
+// 	f.Flush()
+// }
 
-			go Reader(stream)
-
-			// Need struct for mutex
-			streams[remoteAddr.String()] = stream
-		}
-
-		stream.buffer.Receive(buffer[:n])
-	}
-}
-
-// Comment
-func Reader(stream *Stream) {
-	for {
-		frame := stream.buffer.Read()
-
-		if frame == nil {
-			continue
-		}
-
-		payloads <- &Payload{host: stream.host, frame: frame}
-	}
-}
-
-func BytesToMat(data []byte) (gocv.Mat, error) {
-	mat, err := gocv.IMDecode(data, gocv.IMReadColor)
-
-	if err != nil {
-		return gocv.NewMat(), err
-	}
-
-	if mat.Empty() {
-		return gocv.NewMat(), fmt.Errorf("decoded mat is empty")
-	}
-
-	return mat, nil
-}
+// writer, err := gocv.VideoWriterFile("output.mp4", "avc1", 30, 640, 480, true)
+// if err != nil {
+// 	log.Fatal("Error opening video writer:", err)
+// }
+// defer writer.Close()

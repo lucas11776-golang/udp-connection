@@ -13,3 +13,6 @@ go run main.go server
 ```sh
 go run main.go stream
 ```
+
+
+Then open your [`127.0.0.1:8080`](http://12.0.0.1:8080)
