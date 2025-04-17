@@ -127,13 +127,13 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 		timestamp := time.Now().UnixMilli()
 
 		for i := range div {
-			s := i * MTU
-			e := i*MTU + MTU
+			start := i * MTU
+			end := i*MTU + MTU
 
-			if e < len(payload) {
-				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[s:e]))
+			if end < len(payload) {
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[start:end]))
 			} else {
-				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[s:]))
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[start:]))
 			}
 
 			fmt.Println("PACKET", timestamp, i)

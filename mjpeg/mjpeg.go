@@ -7,32 +7,31 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"time"
 )
 
 var (
 	// ErrTooLarge reports if more frames cannot be added,
 	// else the video file would get corrupted.
-	ErrTooLarge = errors.New("Video file too large")
+	ErrTooLarge = errors.New("video file too large")
 
 	// errImproperUse signals improper state (due to a previous error).
-	errImproperState = errors.New("Improper State")
+	errImproperState = errors.New("improper State")
 )
 
 // AviWriter is an *.avi video writer.
 // The video codec is MJPEG.
 type AviWriter interface {
 	// AddFrame adds a frame from a JPEG encoded data slice.
-	AddFrame(jpegData []byte) error
+	// AddFrame(jpegData []byte) error
 
 	// Close finalizes and closes the avi file.
-	Close() error
+	// Close() error
 }
 
 // aviWriter is the AviWriter implementation.
 type aviWriter struct {
-	// aviFile is the name of the file to write the result to
-	aviFile string
 	// width is the width of the video
 	width int32
 	// height is the height of the video
@@ -40,8 +39,21 @@ type aviWriter struct {
 	// fps is the frames/second (the "speed") of the video
 	fps int32
 
+	// idxFile is the name of the index file
+	optionFile string
+	// idxf is the index file descriptor
+	optionf *os.File
+
+	// dataFile is the name of the file to write the result to
+	dataFile string
+	// dataf is the avi file descriptor
+	dataf *os.File
+
+	// aviFile is the name of the file to write the result to
+	aviFile string
 	// avif is the avi file descriptor
 	avif *os.File
+
 	// idxFile is the name of the index file
 	idxFile string
 	// idxf is the index file descriptor
@@ -66,87 +78,37 @@ type aviWriter struct {
 	buf4, buf2 []byte
 }
 
-// Comment
-func exist(aviFile string) bool {
-	_, err := os.Open(aviFile)
-
-	return err != nil
+type Options struct {
+	lengthFields         []int64 `json:"lengthFields"`
+	framesCountFieldPos  int64   `json:"framesCountFieldPos"`
+	framesCountFieldPos2 int64   `json:"framesCountFieldPos2"`
+	moviPos              int64   `json:"moviPos"`
+	frames               int     `json:"frames"`
+	buf4                 []byte  `json:"buf4"`
+	buf2                 []byte  `json:"buf2"`
 }
 
-func NewOrExisting(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
-	// var write AviWriter
-
-	if !exist(aviFile) {
-		fmt.Println("ERROR")
-		return New(aviFile, width, height, fps)
-	}
-
-	aw := &aviWriter{
-		aviFile:      aviFile,
-		width:        width,
-		height:       height,
-		fps:          fps,
-		idxFile:      aviFile + ".idx_",
-		lengthFields: make([]int64, 0, 5),
-		buf4:         make([]byte, 4),
-		buf2:         make([]byte, 2),
-	}
-
-	defer func() {
-		if err == nil {
-			return
+// Comment
+func In(item string, items []string) bool {
+	for i := range items {
+		if items[i] == item {
+			return true
 		}
-		logErr := func(e error) {
-			if e != nil {
-				log.Printf("Error: %v\n", e)
-			}
-		}
-		if aw.avif != nil {
-			logErr(aw.avif.Close())
-			// logErr(os.Remove(aviFile))
-		}
-		if aw.idxf != nil {
-			logErr(aw.idxf.Close())
-			// logErr(os.Remove(aw.idxFile))
-		}
-
-		// fmt.Println("CLOSING")
-	}()
-
-	if aw.err != nil {
-		return nil, err
 	}
-
-	aw.avif, err = os.OpenFile(aviFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
-
-	if err != nil {
-		return nil, err
-	}
-
-	aw.idxf, err = os.OpenFile(aw.idxFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
-
-	if err != nil {
-		return nil, err
-	}
-
-	aw.moviPos = aw.currentPos()
-
-	if err != nil {
-		return nil, err
-	}
-
-	return aw, nil
+	return false
 }
 
 // New returns a new AviWriter.
 // The Close() method of the AviWriter must be called to finalize the video file.
-func New(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
+func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile string) (awr AviWriter, err error) {
 	aw := &aviWriter{
-		aviFile:      aviFile,
+		dataFile:     aviFile,
 		width:        width,
 		height:       height,
 		fps:          fps,
-		idxFile:      aviFile + ".idx_",
+		optionFile:   aviFile + ".__options__",
+		aviFile:      aviFile + ".__data__",
+		idxFile:      aviFile + ".__idx__",
 		lengthFields: make([]int64, 0, 5),
 		buf4:         make([]byte, 4),
 		buf2:         make([]byte, 2),
@@ -161,24 +123,54 @@ func New(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
 				log.Printf("Error: %v\n", e)
 			}
 		}
-		if aw.avif != nil {
-			logErr(aw.avif.Close())
-			// logErr(os.Remove(aviFile))
+		if aw.dataf != nil {
+			logErr(aw.dataf.Close())
 		}
 		if aw.idxf != nil {
 			logErr(aw.idxf.Close())
-			// logErr(os.Remove(aw.idxFile))
 		}
 	}()
 
-	aw.avif, err = os.Create(aviFile)
+	// Options Cache
+	aw.optionf, err = os.Create(storage + "/" + aw.optionFile)
 	if err != nil {
 		return nil, err
 	}
-	aw.idxf, err = os.Create(aw.idxFile)
+
+	// Full Video File
+	aw.dataf, err = os.Create(storage + "/" + aw.dataFile)
 	if err != nil {
 		return nil, err
 	}
+
+	// Video Data Cache
+	aw.avif, err = os.Create(storage + "/" + aw.aviFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Index Cache
+	aw.idxf, err = os.Create(storage + "/" + aw.idxFile)
+	if err != nil {
+		return nil, err
+	}
+
+	dir, err := os.ReadDir(storage)
+
+	// Delete older file
+	if err == nil {
+		items := []string{aw.optionFile, aw.dataFile, aw.aviFile, aw.idxFile}
+
+		for _, entry := range dir {
+			if entry.IsDir() || path.Ext(entry.Name()) == ".avi" || In(entry.Name(), items) {
+				continue
+			}
+
+			os.Remove(storage + "/" + entry.Name())
+		}
+	}
+
+	/*************************************** HEADER ***************************************/
 
 	wstr, wint32, wint16, wLenF, finalizeLenF :=
 		aw.writeStr, aw.writeInt32, aw.writeInt16, aw.writeLengthField, aw.finalizeLengthField
@@ -225,7 +217,7 @@ func New(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
 	aw.framesCountFieldPos2 = aw.currentPos()
 	wint32(0)  // dwLength, playing time of AVI file as defined by scale and rate (set equal to the number of frames)
 	wint32(0)  // dwSuggestedBufferSize for reading the stream (typically, this contains a value corresponding to the largest chunk in a stream)
-	wint32(-1) // dwQuality, encoding quality given by an integer between (0 and 10,000.  If set to -1, drivers use the default quality value)
+	wint32(-1) // wint32, encoding quality given by an integer between (0 and 10,000.  If set to -1, drivers use the default quality value)
 	wint32(0)  // dwSampleSize, 0 means that each frame is in its own chunk
 	wint16(0)  // left of rcFrame if stream has a different size than dwWidth*dwHeight(unused)
 	wint16(0)  //   ..top
@@ -249,7 +241,7 @@ func New(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
 
 	wstr("strn") // Use 'strn' to provide a zero terminated text string describing the stream
 
-	name := fmt.Sprintln("classify at %s", time.Now().Format("2025-01-01 00:00:00 GTM"))
+	name := fmt.Sprintf("classify at %s", time.Now().Format("2025-01-01 00:00:00 GTM"))
 
 	// Name must be 0-terminated and stream name length (the length of the chunk) must be even
 	if len(name)&0x01 == 0 {
@@ -271,6 +263,70 @@ func New(aviFile string, width, height, fps int32) (awr AviWriter, err error) {
 		return nil, aw.err
 	}
 
+	/*************************************** DATA ***************************************/
+
+	for _, jpegData := range jpegs {
+		framePos := aw.currentPos()
+		// Pointers in AVI are 32 bit. Do not write beyond that else the whole AVI file will be corrupted (not playable).
+		// Index entry size: 16 bytes (for each frame)
+		if framePos+int64(len(jpegData))+int64(aw.frames*16) > 4200000000 { // 2^32 = 4 294 967 296
+			return nil, ErrTooLarge
+		}
+
+		aw.frames++
+
+		aw.writeInt32(0x63643030) // "00dc" compressed frame
+		aw.writeLengthField()     // Chunk length (nesting level 2)
+		if aw.err == nil {
+			_, aw.err = aw.dataf.Write(jpegData)
+		}
+		aw.finalizeLengthField() // "00dc" chunk finished (nesting level 2)
+
+		// Write index data
+		aw.writeIdxInt32(0x63643030)                   // "00dc" compressed frame
+		aw.writeIdxInt32(0x10)                         // flags: select AVIIF_KEYFRAME (The flag indicates key frames in the video sequence. Key frames do not need previous video information to be decompressed.)
+		aw.writeIdxInt32(int32(framePos - aw.moviPos)) // offset to the chunk, offset can be relative to file start or 'movi'
+		aw.writeIdxInt32(int32(len(jpegData)))         // length of the chunk
+	}
+
+	/*************************************** INDEX ***************************************/
+
+	defer func() {
+		aw.dataf.Close()
+		aw.idxf.Close()
+		// os.Remove(aw.idxFile)
+	}()
+
+	aw.finalizeLengthField() // LIST 'movi' finished (nesting level 1)
+
+	// Write index
+	aw.writeStr("idx1") // idx1 chunk
+	var idxLength int64
+	if aw.err == nil {
+		idxLength, aw.err = aw.idxf.Seek(0, 1) // Seek relative to current pos
+	}
+	aw.writeInt32(int32(idxLength)) // Chunk length (we know its size, no need to use writeLengthField() and finalizeLengthField() pair)
+	// Copy temporary index data
+	if aw.err == nil {
+		_, aw.err = aw.idxf.Seek(0, 0)
+	}
+	if aw.err == nil {
+		_, aw.err = io.Copy(aw.dataf, aw.idxf)
+	}
+
+	pos := aw.currentPos()
+	aw.seek(aw.framesCountFieldPos, 0)
+	aw.writeInt32(int32(aw.frames))
+	aw.seek(aw.framesCountFieldPos2, 0)
+	aw.writeInt32(int32(aw.frames))
+	aw.seek(pos, 0)
+
+	aw.finalizeLengthField() // 'RIFF' File finished (nesting level 0)
+
+	if err != nil {
+		return nil, aw.err
+	}
+
 	return aw, nil
 }
 
@@ -279,7 +335,7 @@ func (aw *aviWriter) writeStr(s string) {
 	if aw.err != nil {
 		return
 	}
-	_, aw.err = aw.avif.WriteString(s)
+	_, aw.err = aw.dataf.WriteString(s)
 }
 
 // writeInt32 writes a 32-bit int value to the file.
@@ -288,7 +344,7 @@ func (aw *aviWriter) writeInt32(n int32) {
 		return
 	}
 	binary.LittleEndian.PutUint32(aw.buf4, uint32(n))
-	_, aw.err = aw.avif.Write(aw.buf4)
+	_, aw.err = aw.dataf.Write(aw.buf4)
 }
 
 // writeIdxInt32 writes a 32-bit int value to the index file.
@@ -306,7 +362,7 @@ func (aw *aviWriter) writeInt16(n int16) {
 		return
 	}
 	binary.LittleEndian.PutUint16(aw.buf2, uint16(n))
-	_, aw.err = aw.avif.Write(aw.buf2)
+	_, aw.err = aw.dataf.Write(aw.buf2)
 }
 
 // writeLengthField writes an empty int field to the avi file, and saves
@@ -351,77 +407,11 @@ func (aw *aviWriter) seek(offset int64, whence int) (pos int64) {
 	if aw.err != nil {
 		return
 	}
-	pos, aw.err = aw.avif.Seek(offset, whence)
+	pos, aw.err = aw.dataf.Seek(offset, whence)
 	return
 }
 
 // currentPos returns the current file position of the AVI file.
 func (aw *aviWriter) currentPos() int64 {
 	return aw.seek(0, 1) // Seek relative to current pos
-}
-
-// AddFrame implements AviWriter.AddFrame().
-// ErrTooLarge is returned if the vide file is too large and would get corrupted
-// if the given image would be added. The file limit is about 4GB.
-func (aw *aviWriter) AddFrame(jpegData []byte) error {
-	framePos := aw.currentPos()
-	// Pointers in AVI are 32 bit. Do not write beyond that else the whole AVI file will be corrupted (not playable).
-	// Index entry size: 16 bytes (for each frame)
-	if framePos+int64(len(jpegData))+int64(aw.frames*16) > 4200000000 { // 2^32 = 4 294 967 296
-		return ErrTooLarge
-	}
-
-	aw.frames++
-
-	aw.writeInt32(0x63643030) // "00dc" compressed frame
-	aw.writeLengthField()     // Chunk length (nesting level 2)
-	if aw.err == nil {
-		_, aw.err = aw.avif.Write(jpegData)
-	}
-	aw.finalizeLengthField() // "00dc" chunk finished (nesting level 2)
-
-	// Write index data
-	aw.writeIdxInt32(0x63643030)                   // "00dc" compressed frame
-	aw.writeIdxInt32(0x10)                         // flags: select AVIIF_KEYFRAME (The flag indicates key frames in the video sequence. Key frames do not need previous video information to be decompressed.)
-	aw.writeIdxInt32(int32(framePos - aw.moviPos)) // offset to the chunk, offset can be relative to file start or 'movi'
-	aw.writeIdxInt32(int32(len(jpegData)))         // length of the chunk
-
-	return aw.err
-}
-
-// Close implements AviWriter.Close().
-func (aw *aviWriter) Close() (err error) {
-	defer func() {
-		aw.avif.Close()
-		aw.idxf.Close()
-		// os.Remove(aw.idxFile)
-	}()
-
-	aw.finalizeLengthField() // LIST 'movi' finished (nesting level 1)
-
-	// Write index
-	aw.writeStr("idx1") // idx1 chunk
-	var idxLength int64
-	if aw.err == nil {
-		idxLength, aw.err = aw.idxf.Seek(0, 1) // Seek relative to current pos
-	}
-	aw.writeInt32(int32(idxLength)) // Chunk length (we know its size, no need to use writeLengthField() and finalizeLengthField() pair)
-	// Copy temporary index data
-	if aw.err == nil {
-		_, aw.err = aw.idxf.Seek(0, 0)
-	}
-	if aw.err == nil {
-		_, aw.err = io.Copy(aw.avif, aw.idxf)
-	}
-
-	pos := aw.currentPos()
-	aw.seek(aw.framesCountFieldPos, 0)
-	aw.writeInt32(int32(aw.frames))
-	aw.seek(aw.framesCountFieldPos2, 0)
-	aw.writeInt32(int32(aw.frames))
-	aw.seek(pos, 0)
-
-	aw.finalizeLengthField() // 'RIFF' File finished (nesting level 0)
-
-	return aw.err
 }

@@ -24,13 +24,13 @@ type Stream struct {
 	host    string
 	buffer  *jitter.Buffer
 	writer  *gocv.VideoWriter
-	avi     mjpeg.AviWriter
+	// avi     mjpeg.AviWriter
 }
 
 // Comment
 func NewStream(host string) (*Stream, error) {
 	stream := &Stream{
-		storage: "storage",
+		storage: "./storage",
 		host:    host,
 		buffer:  jitter.NewBuffer(),
 	}
@@ -55,27 +55,21 @@ func NewStream(host string) (*Stream, error) {
 	return stream, nil
 }
 
-func (ctx *Stream) Record(frame []byte) {
-	write, err := mjpeg.New("./"+ctx.storage+"/avi-"+ctx.filename("avi"), 720, 360, 60)
+// Comment
+func (ctx *Stream) Record(frame [][]byte) {
+	_, err := mjpeg.New(ctx.storage, frame, 720, 360, 60, ctx.filename("avi"))
 
 	if err != nil {
+
+		fmt.Println("ERRROR", err)
+
 		return
 	}
-
-	err = write.AddFrame(frame)
-
-	if err != nil {
-		fmt.Println("Error", err)
-	}
-
-	write.Close() // ending video with idx1
 }
 
 func (ctx *Stream) filename(ext string) string {
 	t := time.Now()
-	return fmt.Sprintf(
-		"%s-%d-%s-%d.%s", ctx.host, t.Day(), t.Month().String(), t.Year(), ext,
-	)
+	return fmt.Sprintf("%d-%s-%d.%s", t.Day(), t.Month().String(), t.Year(), ext)
 }
 
 var streams = map[string]*Stream{}
@@ -101,11 +95,11 @@ func Server(host string, port int) {
 
 	index := 0
 
+	frames := [][]byte{}
+
 	for payload := range payloads {
 		if stream, ok := streams[payload.Host]; ok {
 			go func() { payloadsRx <- rxgo.Of(payload) }()
-
-			stream.Record(payload.Frame.Data)
 
 			mat, err := BytesToMat(payload.Frame.Data)
 
@@ -113,9 +107,14 @@ func Server(host string, port int) {
 				continue
 			}
 
-			// if index == 1 {
-			// 	return
-			// }
+			frames = append(frames, payload.Frame.Data)
+
+			// TODO: testing - 5seconds video clip
+			if index == (60 * 5) {
+
+				stream.Record(frames)
+				return
+			}
 
 			index++
 
