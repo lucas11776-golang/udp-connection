@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"net"
+	"time"
 
 	"gocv.io/x/gocv"
 )
@@ -90,14 +91,10 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 		panic(err)
 	}
 
-	index := 0
-
 	video.Reader(func(frame gocv.Mat, err error) {
 
 		// if index > 0 {
-
 		// 	os.Exit(0)
-
 		// 	return
 		// }
 
@@ -119,8 +116,6 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 
 		payload := buff.GetBytes()
 
-		// fmt.Println("PACKET:", index, " SIZE:", len(payload))
-
 		size := len(payload)
 		div := size / MTU
 		rim := size % MTU
@@ -129,24 +124,19 @@ func (ctx *LiveStreamFaker) fakeVideoFeed(host string, port int, video LiveStrea
 			div += 1
 		}
 
-		fmt.Println("INDEX", index)
+		timestamp := time.Now().UnixMilli()
 
 		for i := range div {
 			s := i * MTU
 			e := i*MTU + MTU
 
-			// fmt.Println("DIV", i)
-
 			if e < len(payload) {
-				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:e]))
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[s:e]))
 			} else {
-				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(index), uint16(i), payload[s:]))
+				conn.Write(ctx.packet(video.Fps(), uint16(div), uint64(timestamp), uint16(i), payload[s:]))
 			}
 
-			fmt.Println("PACKET", index, i)
-
+			fmt.Println("PACKET", timestamp, i)
 		}
-
-		index++
 	})
 }
