@@ -107,11 +107,11 @@ func Server(host string, port int) {
 				continue
 			}
 
+			// TODO: testing - 5seconds video clip
+
 			frames = append(frames, payload.Frame.Data)
 
-			// TODO: testing - 5seconds video clip
 			if index == (60 * 5) {
-
 				stream.Record(frames)
 				return
 			}
