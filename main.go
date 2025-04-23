@@ -6,7 +6,6 @@ import (
 	"classify/video"
 	"context"
 	"fmt"
-	h "net/http"
 	"os"
 	"strings"
 
@@ -84,9 +83,9 @@ func server() {
 						res.Writer.Write(frame.V.([]byte))
 						res.Writer.Write([]byte("\r\n"))
 
-						if f, ok := res.Writer.(h.Flusher); ok {
-							f.Flush()
-						}
+						// if f, ok := res.Writer.(h.Flusher); ok {
+						// 	f.Flush()
+						// }
 					}
 				}
 
@@ -97,28 +96,3 @@ func server() {
 
 	server.Listen()
 }
-
-// Can you show me a GO example of MJPEG frames for video stream?
-
-// Want a quick example in Go or Python on how to serve MJPEG from those frames
-
-// // Write multipart response
-// w.Write([]byte("--frame\r\n"))
-// w.Write([]byte("Content-Type: image/jpeg\r\n"))
-// w.Write([]byte("Content-Length: " + string(len(buf)) + "\r\n\r\n"))
-// w.Write(buf)
-// w.Write([]byte("\r\n"))
-
-// // Stream at ~30fps
-// time.Sleep(33 * time.Millisecond)
-
-// // Flush to client
-// if f, ok := w.(http.Flusher); ok {
-// 	f.Flush()
-// }
-
-// writer, err := gocv.VideoWriterFile("output.mp4", "avc1", 30, 640, 480, true)
-// if err != nil {
-// 	log.Fatal("Error opening video writer:", err)
-// }
-// defer writer.Close()

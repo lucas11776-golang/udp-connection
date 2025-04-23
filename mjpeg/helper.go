@@ -2,6 +2,7 @@ package mjpeg
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 )
 
@@ -50,6 +51,8 @@ func FinalizeLengthField(f *os.File, lengthFields []int64) ([]int64, error) {
 	Seek(f, lengthFields[numLenFs-1], 0)
 	lengthFields = lengthFields[:numLenFs-1]
 
+	fmt.Println("lengthFields", lengthFields)
+
 	cPos, err := CurrentPos(f)
 
 	if err != nil {
@@ -96,4 +99,15 @@ func WriteLengthField(f *os.File, lengthFields []int64) ([]int64, error) {
 	}
 
 	return lengthFields, err
+}
+
+// Get the file size
+func Size(f *os.File) (int64, error) {
+	stat, err := f.Stat()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return stat.Size(), nil
 }

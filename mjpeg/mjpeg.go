@@ -1,6 +1,7 @@
 package mjpeg
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -74,14 +75,9 @@ type aviWriter struct {
 
 	// Storage
 	storage string
-}
 
-type Options struct {
-	LengthFields         []int64 `json:"lengthFields"`
-	FramesCountFieldPos  int64   `json:"framesCountFieldPos"`
-	FramesCountFieldPos2 int64   `json:"framesCountFieldPos2"`
-	MoviPos              int64   `json:"moviPos"`
-	Frames               int     `json:"frames"`
+	// End D P
+	endDataPosition int64
 }
 
 // Comment
@@ -130,25 +126,25 @@ func (aw *aviWriter) openCache() error {
 	var err error
 
 	// Options Cache
-	aw.optionf, err = os.OpenFile(aw.storage+"/"+aw.optionFile, os.O_APPEND, os.ModePerm)
+	aw.optionf, err = os.OpenFile(aw.storage+"/"+aw.optionFile, os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return err
 	}
 
 	// Full Video File
-	aw.dataf, err = os.OpenFile(aw.storage+"/"+aw.dataFile, os.O_APPEND, os.ModePerm)
+	aw.dataf, err = os.OpenFile(aw.storage+"/"+aw.dataFile, os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return err
 	}
 
 	// Video Data Cache
-	aw.avif, err = os.OpenFile(aw.storage+"/"+aw.aviFile, os.O_APPEND, os.ModePerm)
+	aw.avif, err = os.OpenFile(aw.storage+"/"+aw.aviFile, os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return err
 	}
 
 	// Index Cache
-	aw.idxf, err = os.OpenFile(aw.storage+"/"+aw.idxFile, os.O_APPEND, os.ModePerm)
+	aw.idxf, err = os.OpenFile(aw.storage+"/"+aw.idxFile, os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return err
 	}
@@ -306,33 +302,71 @@ func (aw *aviWriter) writeHeaderPart(f *os.File, width, height, fps int32) error
 
 // Comment
 func (ctx *aviWriter) openFiles() error {
-	// if err := ctx.openCache(); err != nil {
-	// 	if err := ctx.createFiles(); err != nil {
-	// 		return err
-	// 	}
+	if err := ctx.openCache(); err != nil {
+		if err := ctx.createFiles(); err != nil {
+			return err
+		}
 
-	// 	if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
-	// 		return err
-	// 	}
+		if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
+			return err
+		}
+
+		fmt.Println("------ ERROR Not File ------")
+
+		if ctx.endDataPosition, err = Size(ctx.dataf); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	// if err := ctx.createFiles(); err != nil {
+	// 	return err
 	// }
 
-	if err := ctx.createFiles(); err != nil {
+	// if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
+	// 	return err
+	// }
+
+	// ctx.endDataPosition, err = Size(aw.s)
+
+	opt, err := io.ReadAll(ctx.optionf)
+
+	if err != err {
 		return err
 	}
 
-	if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
+	var options Options
+
+	err = json.Unmarshal(opt, &options)
+
+	if err != nil {
 		return err
 	}
+
+	ctx.lengthFields = options.LengthFields
+	ctx.framesCountFieldPos = options.FramesCountFieldPos
+	ctx.framesCountFieldPos2 = options.FramesCountFieldPos2
+	ctx.moviPos = options.MoviPos
+	ctx.frames = options.Frames
+	ctx.endDataPosition = options.EndDataPosition
 
 	return nil
 }
 
 func (aw *aviWriter) AddFrame(jpeg []byte) error {
-	framePos, err := CurrentPos(aw.dataf)
+	var framePos int64
+	var err error
+
+	framePos, err = CurrentPos(aw.dataf)
 
 	if err != nil {
 		return err // TODO bad things happing...
 	}
+
+	// framePos, err = CurrentPos(aw.dataf)
+
+	// fmt.Println("POSITION ->", "SEEK", framePos, "DATA", aw.endDataPosition)
 
 	// Pointers in AVI are 32 bit. Do not write beyond that else the whole AVI file will be corrupted (not playable).
 	// Index entry size: 16 bytes (for each frame)
@@ -342,6 +376,7 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 
 	aw.frames++
 
+	// 4 bits
 	WriteInt32(aw.dataf, 0x63643030) // "00dc" compressed frame
 
 	// Chunk length (nesting level 2)
@@ -349,12 +384,14 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 		return err // TODO bad things happing...
 	}
 
+	// len(jpeg) bits
 	err = Write(aw.dataf, jpeg)
 
 	if err != nil {
 		return err // TODO bad things happing...
 	}
 
+	// 4 bits
 	aw.lengthFields, err = FinalizeLengthField(aw.dataf, aw.lengthFields) // "00dc" chunk finished (nesting level 2)
 
 	if err != nil {
@@ -362,7 +399,10 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 	}
 
 	// Write index data
-	WriteInt32(aw.idxf, 0x63643030)                 // "00dc" compressed frame
+	err = WriteInt32(aw.idxf, 0x63643030) // "00dc" compressed frame
+
+	fmt.Println("IDX WRITE ERR", err)
+
 	WriteInt32(aw.idxf, 0x10)                       // flags: select AVIIF_KEYFRAME (The flag indicates key frames in the video sequence. Key frames do not need previous video information to be decompressed.)
 	WriteInt32(aw.idxf, int32(framePos-aw.moviPos)) // offset to the chunk, offset can be relative to file start or 'movi'
 	WriteInt32(aw.idxf, int32(len(jpeg)))
@@ -406,17 +446,43 @@ func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile strin
 		}
 	}
 
+	// fmt.Println("EndPosition", aw.endDataPosition)
+
+	// return nil, fmt.Errorf("YEs...")
+
 	/*************************************** DATA ***************************************/
 
+	// if aw.endDataPosition != 0 {
+	// 	aw.dataf.Seek(aw.endDataPosition, 1)
+	// }
+
+	// Coping the file each frame is bad....
 	for _, jpeg := range jpegs {
 		if err := aw.AddFrame(jpeg); err != nil {
 			return nil, err
 		}
-
-		aw.dataf.Seek(0, 0)
-		n, err := io.Copy(aw.avif, aw.dataf)
-		fmt.Println("Err ------> ", err, n)
 	}
+
+	// return nil, fmt.Errorf("Yes.")
+
+	// SAVING LAST END DATA POSITION
+	aw.endDataPosition, err = Size(aw.dataf)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := aw.saveOptions(); err != nil {
+		return nil, err
+	}
+
+	// seek, _ := aw.dataf.Seek(0, 1)
+
+	// fmt.Println("POSITION ->", "SEEK", seek, "SIZE", aw.endDataPosition)
+
+	// SAVING LAST END DATA POSITION
+
+	// return nil, fmt.Errorf("testing")
 
 	/*************************************** INDEX ***************************************/
 
@@ -465,4 +531,35 @@ func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile strin
 	}
 
 	return aw, nil
+}
+
+type Options struct {
+	LengthFields         []int64 `json:"lengthFields"`
+	FramesCountFieldPos  int64   `json:"framesCountFieldPos"`
+	FramesCountFieldPos2 int64   `json:"framesCountFieldPos2"`
+	MoviPos              int64   `json:"moviPos"`
+	Frames               int     `json:"frames"`
+	EndDataPosition      int64   `json:"end_data_postion"`
+}
+
+// Comment
+func (aw *aviWriter) saveOptions() error {
+	data, err := json.Marshal(Options{
+		LengthFields:         aw.lengthFields,
+		FramesCountFieldPos:  aw.framesCountFieldPos,
+		FramesCountFieldPos2: aw.framesCountFieldPos2,
+		MoviPos:              aw.moviPos,
+		Frames:               aw.frames,
+		EndDataPosition:      aw.endDataPosition,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if _, err := aw.optionf.WriteAt(data, 0); err != nil {
+		return err
+	}
+
+	return nil
 }

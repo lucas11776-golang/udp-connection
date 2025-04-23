@@ -4,14 +4,14 @@
 ## Running Server
 
 ```sh
-go run main.go server
+go run cmd/main.go server
 ```
 
 
 ## Running Stream
 
 ```sh
-go run main.go stream
+go run cmd/main.go stream
 ```
 
 
