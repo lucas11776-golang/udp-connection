@@ -45,8 +45,8 @@ type aviWriter struct {
 
 	// dataFile is the name of the file to write the result to
 	dataFile string
-	// dataf is the avi file descriptor
-	dataf *os.File
+	// ddf is the avi file descriptor
+	ddf *os.File
 
 	// aviFile is the name of the file to write the result to
 	aviFile string
@@ -75,9 +75,6 @@ type aviWriter struct {
 
 	// Storage
 	storage string
-
-	// End D P
-	endDataPosition int64
 }
 
 // Comment
@@ -101,16 +98,16 @@ func (aw *aviWriter) createFiles() error {
 	}
 
 	// Full Video File
-	aw.dataf, err = os.Create(aw.storage + "/" + aw.dataFile)
+	aw.ddf, err = os.Create(aw.storage + "/" + aw.dataFile)
 	if err != nil {
 		return err
 	}
 
-	// Video Data Cache
-	aw.avif, err = os.Create(aw.storage + "/" + aw.aviFile)
-	if err != nil {
-		return err
-	}
+	// // Video Data Cache
+	// aw.avif, err = os.Create(aw.storage + "/" + aw.aviFile)
+	// if err != nil {
+	// 	return err
+	// }
 
 	// Index Cache
 	aw.idxf, err = os.Create(aw.storage + "/" + aw.idxFile)
@@ -132,16 +129,16 @@ func (aw *aviWriter) openCache() error {
 	}
 
 	// Full Video File
-	aw.dataf, err = os.OpenFile(aw.storage+"/"+aw.dataFile, os.O_RDWR, os.ModePerm)
+	aw.ddf, err = os.OpenFile(aw.storage+"/"+aw.dataFile, os.O_APPEND|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		return err
 	}
 
-	// Video Data Cache
-	aw.avif, err = os.OpenFile(aw.storage+"/"+aw.aviFile, os.O_RDWR, os.ModePerm)
-	if err != nil {
-		return err
-	}
+	// // Video Data Cache
+	// aw.avif, err = os.Create(aw.storage + "/" + aw.aviFile)
+	// if err != nil {
+	// 	return err
+	// }
 
 	// Index Cache
 	aw.idxf, err = os.OpenFile(aw.storage+"/"+aw.idxFile, os.O_RDWR, os.ModePerm)
@@ -152,9 +149,9 @@ func (aw *aviWriter) openCache() error {
 	return err
 }
 
-/*************************************** HEADER ***************************************/
 // Comment
 func (aw *aviWriter) writeHeaderPart(f *os.File, width, height, fps int32) error {
+	fmt.Println("/*************************************** HEADER ***************************************/")
 
 	var err error
 
@@ -273,11 +270,11 @@ func (aw *aviWriter) writeHeaderPart(f *os.File, width, height, fps int32) error
 		name = name + "\000" // terminating 0
 	}
 	WriteInt32(f, int32(len(name))) // Length of the strn sub-CHUNK (must be even)
-	WriteStr(aw.dataf, name)
+	WriteStr(f, name)
 	aw.lengthFields, _ = FinalizeLengthField(f, aw.lengthFields) // LIST 'strl' finished (nesting level 2)
 	aw.lengthFields, _ = FinalizeLengthField(f, aw.lengthFields) // LIST 'hdrl' finished (nesting level 1)
 
-	WriteStr(aw.dataf, "LIST") // The second LIST chunk, which contains the actual data
+	WriteStr(f, "LIST") // The second LIST chunk, which contains the actual data
 
 	aw.lengthFields, err = WriteLengthField(f, aw.lengthFields) // Chunk length (nesting level 1)
 
@@ -307,28 +304,14 @@ func (ctx *aviWriter) openFiles() error {
 			return err
 		}
 
-		if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
+		if err := ctx.writeHeaderPart(ctx.ddf, ctx.width, ctx.height, ctx.fps); err != nil {
 			return err
 		}
 
 		fmt.Println("------ ERROR Not File ------")
 
-		if ctx.endDataPosition, err = Size(ctx.dataf); err != nil {
-			return err
-		}
-
 		return nil
 	}
-
-	// if err := ctx.createFiles(); err != nil {
-	// 	return err
-	// }
-
-	// if err := ctx.writeHeaderPart(ctx.dataf, ctx.width, ctx.height, ctx.fps); err != nil {
-	// 	return err
-	// }
-
-	// ctx.endDataPosition, err = Size(aw.s)
 
 	opt, err := io.ReadAll(ctx.optionf)
 
@@ -349,7 +332,19 @@ func (ctx *aviWriter) openFiles() error {
 	ctx.framesCountFieldPos2 = options.FramesCountFieldPos2
 	ctx.moviPos = options.MoviPos
 	ctx.frames = options.Frames
-	ctx.endDataPosition = options.EndDataPosition
+
+	// // TODO: this will be slow...
+	// if file.SplicePrefix(ctx.storage+"/"+ctx.dataFile, "idx1", 4) {
+	// 	fmt.Println("SPLICED ---->>>")
+	// }
+
+	// // os.Exit(0)
+
+	// // Full Video File
+	// ctx.dataf, err = os.OpenFile(ctx.storage+"/"+ctx.dataFile, os.O_RDWR, os.ModePerm)
+	// if err != nil {
+	// 	return err
+	// }
 
 	return nil
 }
@@ -358,15 +353,14 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 	var framePos int64
 	var err error
 
-	framePos, err = CurrentPos(aw.dataf)
+	framePos, err = CurrentPos(aw.ddf)
+	// framePos, err = aw.dataf.Seek(0, io.SeekEnd)
 
 	if err != nil {
 		return err // TODO bad things happing...
 	}
 
 	// framePos, err = CurrentPos(aw.dataf)
-
-	// fmt.Println("POSITION ->", "SEEK", framePos, "DATA", aw.endDataPosition)
 
 	// Pointers in AVI are 32 bit. Do not write beyond that else the whole AVI file will be corrupted (not playable).
 	// Index entry size: 16 bytes (for each frame)
@@ -377,22 +371,22 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 	aw.frames++
 
 	// 4 bits
-	WriteInt32(aw.dataf, 0x63643030) // "00dc" compressed frame
+	WriteInt32(aw.ddf, 0x63643030) // "00dc" compressed frame
 
 	// Chunk length (nesting level 2)
-	if aw.lengthFields, err = WriteLengthField(aw.dataf, aw.lengthFields); err != nil {
+	if aw.lengthFields, err = WriteLengthField(aw.ddf, aw.lengthFields); err != nil {
 		return err // TODO bad things happing...
 	}
 
 	// len(jpeg) bits
-	err = Write(aw.dataf, jpeg)
+	err = Write(aw.ddf, jpeg)
 
 	if err != nil {
 		return err // TODO bad things happing...
 	}
 
 	// 4 bits
-	aw.lengthFields, err = FinalizeLengthField(aw.dataf, aw.lengthFields) // "00dc" chunk finished (nesting level 2)
+	aw.lengthFields, err = FinalizeLengthField(aw.ddf, aw.lengthFields) // "00dc" chunk finished (nesting level 2)
 
 	if err != nil {
 		return err // TODO bad things happing...
@@ -401,7 +395,7 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 	// Write index data
 	err = WriteInt32(aw.idxf, 0x63643030) // "00dc" compressed frame
 
-	fmt.Println("IDX WRITE ERR", err)
+	// fmt.Println("IDX WRITE ERR", err)
 
 	WriteInt32(aw.idxf, 0x10)                       // flags: select AVIIF_KEYFRAME (The flag indicates key frames in the video sequence. Key frames do not need previous video information to be decompressed.)
 	WriteInt32(aw.idxf, int32(framePos-aw.moviPos)) // offset to the chunk, offset can be relative to file start or 'movi'
@@ -414,9 +408,9 @@ func (aw *aviWriter) AddFrame(jpeg []byte) error {
 // The Close() method of the AviWriter must be called to finalize the video file.
 func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile string) (awr AviWriter, err error) {
 	aw := &aviWriter{
-		aviFile:      aviFile + ".__data__",
+		aviFile:      aviFile,
 		optionFile:   aviFile + ".__options__",
-		dataFile:     aviFile,
+		dataFile:     aviFile + ".__data__",
 		idxFile:      aviFile + ".__idx__",
 		width:        width,
 		height:       height,
@@ -446,16 +440,6 @@ func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile strin
 		}
 	}
 
-	// fmt.Println("EndPosition", aw.endDataPosition)
-
-	// return nil, fmt.Errorf("YEs...")
-
-	/*************************************** DATA ***************************************/
-
-	// if aw.endDataPosition != 0 {
-	// 	aw.dataf.Seek(aw.endDataPosition, 1)
-	// }
-
 	// Coping the file each frame is bad....
 	for _, jpeg := range jpegs {
 		if err := aw.AddFrame(jpeg); err != nil {
@@ -463,45 +447,43 @@ func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile strin
 		}
 	}
 
-	// return nil, fmt.Errorf("Yes.")
-
-	// SAVING LAST END DATA POSITION
-	aw.endDataPosition, err = Size(aw.dataf)
-
-	if err != nil {
-		return nil, err
-	}
-
 	if err := aw.saveOptions(); err != nil {
 		return nil, err
 	}
 
-	// seek, _ := aw.dataf.Seek(0, 1)
+	// return
 
-	// fmt.Println("POSITION ->", "SEEK", seek, "SIZE", aw.endDataPosition)
+	// file.Create(storage + "/" + aw.aviFile)
+	// file.Join(storage+"/"+aw.aviFile, storage+"/"+aw.dataFile)
 
-	// SAVING LAST END DATA POSITION
+	// io.Copy(aw.avif, aw.ddf)
 
-	// return nil, fmt.Errorf("testing")
+	// // Video Data Cache
+	// aw.avif, err = os.OpenFile(aw.storage+"/"+aw.aviFile, os.O_APPEND|os.O_WRONLY, os.ModePerm)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// return
 
 	/*************************************** INDEX ***************************************/
 
 	// aw.finalizeLengthField()
-	aw.lengthFields, err = FinalizeLengthField(aw.dataf, aw.lengthFields) // LIST 'movi' finished (nesting level 1)
+	aw.lengthFields, err = FinalizeLengthField(aw.ddf, aw.lengthFields) // LIST 'movi' finished (nesting level 1)
 
 	if err != nil {
 		return nil, err
 	}
 
 	// Write index
-	WriteStr(aw.dataf, "idx1") // idx1 chunk
+	WriteStr(aw.ddf, "idx1") // idx1 chunk
 	var idxLength int64
 
 	if aw.err == nil {
 		idxLength, aw.err = Seek(aw.idxf, 0, 1) // Seek relative to current pos
 	}
 
-	WriteInt32(aw.dataf, int32(idxLength)) // Chunk length (we know its size, no need to use writeLengthField() and finalizeLengthField() pair)
+	WriteInt32(aw.ddf, int32(idxLength)) // Chunk length (we know its size, no need to use writeLengthField() and finalizeLengthField() pair)
 
 	// Copy temporary index data
 	if aw.err == nil { // TOD RM
@@ -509,22 +491,31 @@ func New(storage string, jpegs [][]byte, width, height, fps int32, aviFile strin
 	}
 
 	if aw.err == nil { // TODO RM
-		_, aw.err = io.Copy(aw.dataf, aw.idxf)
+		_, aw.err = io.Copy(aw.ddf, aw.idxf)
+		// file.Join(storage+"/"+aw.aviFile, storage+"/"+aw.idxFile)
 	}
 
-	pos, err := CurrentPos(aw.dataf)
+	pos, err := CurrentPos(aw.ddf)
 
 	if err != nil {
 		return nil, err
 	}
 
-	Seek(aw.dataf, aw.framesCountFieldPos, 0)
-	WriteInt32(aw.dataf, int32(aw.frames))
-	Seek(aw.dataf, aw.framesCountFieldPos2, 0)
-	WriteInt32(aw.dataf, int32(aw.frames))
-	Seek(aw.dataf, pos, 0)
+	Seek(aw.ddf, aw.framesCountFieldPos, 0)
+	WriteInt32(aw.ddf, int32(aw.frames))
+	Seek(aw.ddf, aw.framesCountFieldPos2, 0)
+	WriteInt32(aw.ddf, int32(aw.frames))
+	Seek(aw.ddf, pos, 0)
 
-	aw.lengthFields, err = FinalizeLengthField(aw.dataf, aw.lengthFields) // 'RIFF' File finished (nesting level 0)
+	aw.lengthFields, err = FinalizeLengthField(aw.ddf, aw.lengthFields) // 'RIFF' File finished (nesting level 0)
+
+	// file.Create(storage + "/" + aw.aviFile)
+	// file.Join(storage+"/"+aw.aviFile, storage+"/"+aw.dataFile)
+
+	aw.avif.Close()
+	aw.ddf.Close()
+	aw.idxf.Close()
+	aw.optionf.Close()
 
 	if err != nil {
 		return nil, aw.err
@@ -539,7 +530,6 @@ type Options struct {
 	FramesCountFieldPos2 int64   `json:"framesCountFieldPos2"`
 	MoviPos              int64   `json:"moviPos"`
 	Frames               int     `json:"frames"`
-	EndDataPosition      int64   `json:"end_data_postion"`
 }
 
 // Comment
@@ -550,7 +540,6 @@ func (aw *aviWriter) saveOptions() error {
 		FramesCountFieldPos2: aw.framesCountFieldPos2,
 		MoviPos:              aw.moviPos,
 		Frames:               aw.frames,
-		EndDataPosition:      aw.endDataPosition,
 	})
 
 	if err != nil {

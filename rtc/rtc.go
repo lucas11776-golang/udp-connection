@@ -1,15 +1,18 @@
 package rtc
 
 import (
+	"classify/ffmpeg/mp4"
 	"classify/jitter"
-	"classify/mjpeg"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/reactivex/rxgo/v2"
 	"gocv.io/x/gocv"
 )
+
+const STORAGE = "./storage"
 
 type Payload struct {
 	Host  string
@@ -23,48 +26,35 @@ type Stream struct {
 	storage string
 	host    string
 	buffer  *jitter.Buffer
-	writer  *gocv.VideoWriter
-	// avi     mjpeg.AviWriter
 }
 
 // Comment
 func NewStream(host string) (*Stream, error) {
-	stream := &Stream{
-		storage: "./storage",
-		host:    host,
-		buffer:  jitter.NewBuffer(),
+	cwd, err := os.Getwd()
+
+	if err != nil {
+		return nil, err
 	}
 
-	// writer, err := gocv.VideoWriterFile("./"+stream.storage+"/avi-"+stream.filename("mp4"), "mp4v", 60, 720, 360, true)
-
-	// if err != nil {
-	// 	fmt.Println("Error --> :", err)
-	// 	return nil, err
-	// }
-
-	// stream.writer = writer
-
-	// avi, err := mjpeg.NewOrExisting("./"+stream.storage+"/avi-"+stream.filename("avi"), 720, 360, 60)
-
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// stream.avi = avi
-
-	return stream, nil
+	return &Stream{
+		storage: fmt.Sprintf("%s/storage", cwd),
+		host:    host,
+		buffer:  jitter.NewBuffer(),
+	}, nil
 }
 
 // Comment
-func (ctx *Stream) Record(frame [][]byte) {
-	_, err := mjpeg.New(ctx.storage, frame, 720, 360, 60, ctx.filename("avi"))
+func (ctx *Stream) Record(frame []byte) error {
 
-	if err != nil {
+	// err := avi.Open(fmt.Sprintf("%s/%s", ctx.storage, ctx.filename("mp4")), 60, 1, 720, 360, ctx.storage).Add(frame)
 
-		fmt.Println("ERRROR", err)
+	// err := v.Add(frame)
 
-		return
-	}
+	// if err != nil {
+	// 	return err
+	// }
+
+	return nil
 }
 
 func (ctx *Stream) filename(ext string) string {
@@ -91,35 +81,10 @@ func Server(host string, port int) {
 
 	go run(conn)
 
-	window := gocv.NewWindow("UDP CONNECTION")
-
-	index := 0
-
-	frames := [][]byte{}
-
 	for payload := range payloads {
-		if stream, ok := streams[payload.Host]; ok {
+		if _, ok := streams[payload.Host]; ok {
 			go func() { payloadsRx <- rxgo.Of(payload) }()
-
-			mat, err := BytesToMat(payload.Frame.Data)
-
-			if err != nil {
-				continue
-			}
-
-			// TODO: testing - 5seconds video clip
-
-			if index == (60 * 5) {
-				stream.Record(frames)
-				return
-			}
-
-			frames = append(frames, payload.Frame.Data)
-
-			index++
-
-			window.IMShow(mat)
-			window.WaitKey(1)
+			go mp4.New(STORAGE).Record(time.UnixMilli(payload.Frame.Timestamp), payload.Frame.Data)
 		}
 	}
 
@@ -171,7 +136,10 @@ func Reader(stream *Stream) {
 			continue
 		}
 
-		payloads <- &Payload{Host: stream.host, Frame: frame}
+		payloads <- &Payload{
+			Host:  stream.host,
+			Frame: frame,
+		}
 	}
 }
 

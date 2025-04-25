@@ -23,7 +23,7 @@ func (ctx *Fragment) Data() []byte {
 }
 
 type Packet struct {
-	time      time.Time
+	time      time.Time // Not need - replace (position)
 	position  int64
 	fps       int
 	total     int
@@ -200,7 +200,11 @@ func (ctx *Stream) Frame() *Frame {
 		data = append(data, packet.fragments[pos].data...)
 	}
 
-	return &Frame{Rate: packet.fps, Data: data}
+	return &Frame{
+		Timestamp: packet.position,
+		Rate:      packet.fps,
+		Data:      data,
+	}
 }
 
 // Comment
@@ -217,8 +221,9 @@ func (ctx *Stream) Store(packet *Packet) {
 }
 
 type Frame struct {
-	Rate int
-	Data []byte
+	Timestamp int64
+	Rate      int
+	Data      []byte
 }
 
 // comment

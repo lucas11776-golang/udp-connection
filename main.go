@@ -96,3 +96,5 @@ func server() {
 
 	server.Listen()
 }
+
+/******************* TESTING *********/
